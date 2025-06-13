@@ -23,7 +23,21 @@ else()
 endif()
 
 
-## Generator-specific configuration ##
+if(APPLE)
+    message(STATUS ">>>>> Applying DragNDrop CPack configuration for macOS <<<<<")
+
+    # Use the DragNDrop generator to create a DMG file.
+    # This generator expects a complete .app bundle from the install step.
+    set(CPACK_GENERATOR "DragNDrop")
+
+    # This is the filename of the final DMG, e.g., Synfig-1.5.3.dmg
+    set(CPACK_PACKAGE_FILE_NAME "Synfig-${CPACK_PACKAGE_VERSION}")
+
+    # Add a message to see the install prefix that CPack is using.
+    # This tells us where it's putting the .app bundle.
+    message(STATUS "CPack Install Prefix: ${CMAKE_INSTALL_PREFIX}")
+
+endif()
 
 # DEB (Linux .deb bundle)
 set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
