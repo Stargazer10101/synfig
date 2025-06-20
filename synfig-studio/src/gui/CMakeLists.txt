@@ -49,7 +49,6 @@ if(APPLE)
     )
     set_target_properties(synfigstudio PROPERTIES
         MACOSX_BUNDLE TRUE
-        MACOSX_BUNDLE_ICON_FILE synfig_icon.icns # You'll need to add an .icns file to the source tree
         MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_BINARY_DIR}/Info.plist"
     )
 endif()
