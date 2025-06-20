@@ -37,6 +37,33 @@ else()
 	add_executable(synfigstudio main.cpp)
 endif()
 
+if(APPLE)
+	configure_file(
+        "${CMAKE_CURRENT_SOURCE_DIR}/Info.plist.in"
+        "${CMAKE_CURRENT_BINARY_DIR}/Info.plist"
+        @ONLY
+    )
+
+	target_sources(synfigstudio PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/synfig_icon.icns"
+    )
+    set_target_properties(synfigstudio PROPERTIES
+        MACOSX_BUNDLE TRUE
+        MACOSX_BUNDLE_ICON_FILE synfig_icon.icns # You'll need to add an .icns file to the source tree
+        MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_BINARY_DIR}/Info.plist"
+    )
+endif()
+
+install(
+    TARGETS synfigstudio
+    # Installs the .app into the root of the installation directory.
+    DESTINATION Applications
+    # Groups this as part of the main application component.
+    COMPONENT applications
+)
+
+
+
 include_directories(${CMAKE_CURRENT_SOURCE_DIR})
 
 target_sources(synfigstudio
