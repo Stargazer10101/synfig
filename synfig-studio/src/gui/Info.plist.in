@@ -7,7 +7,7 @@
     <string>synfigstudio</string>
     <key>CFBundleIconFile</key>
     <string>synfig_icon.icns</string>       
-    <key>CFBundleIdentifier</key>Add commentMore actions
+    <key>CFBundleIdentifier</key>
 
     <string>org.synfig.SynfigStudio</string>
     <key>CFBundlePackageType</key>
