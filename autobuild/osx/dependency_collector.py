@@ -277,22 +277,43 @@ def process_and_bundle_dependencies(src_path, app_bundle_path, processed_set, de
             logging.error(f"COULD NOT FIND dependency '{lib_path}' required by '{lib_name}'.")
    
 def bundle_data_resources(app_bundle_path, args):
-    """Copies shared data resources (icons, themes, etc.) into the bundle."""
-    logging.info("--- Bundling App Resources (share directory) ---")
+    """
+    Copies shared data resources, explicitly including critical GTK icon themes,
+    from the Homebrew installation to the bundle.
+    """
+    logging.info("--- Bundling App Resources (share and etc directories) ---")
+    homebrew_prefix = get_homebrew_prefix()
+    if not homebrew_prefix:
+        logging.error("Cannot find Homebrew prefix. Unable to bundle GTK resources.")
+        return
 
-    # This path assumes the 'share' directory is in the build directory, one level up from bin_dir
+    dest_resources_dir = os.path.join(app_bundle_path, "Contents", "Resources")
+    
+    # --- Copy main 'share' and 'etc' from the build directory as before ---
     source_share_dir = os.path.join(os.path.dirname(args.bin_dir), "share")
-    dest_share_dir = os.path.join(app_bundle_path, "Contents", "share")
-
     if os.path.isdir(source_share_dir):
-        logging.info(f"Copying resources from '{source_share_dir}' to '{os.path.relpath(dest_share_dir, app_bundle_path)}'")
-        # dirs_exist_ok=True is useful to avoid errors if the dir already exists
-        shutil.copytree(source_share_dir, dest_share_dir, dirs_exist_ok=True)
-    else:
-        logging.warning(f"RESOURCE DIRECTORY NOT FOUND at '{source_share_dir}'. UI may be broken.")
+        shutil.copytree(source_share_dir, os.path.join(dest_resources_dir, "share"), dirs_exist_ok=True)
+        
+    source_etc_dir = os.path.join(os.path.dirname(args.bin_dir), "etc")
+    if os.path.isdir(source_etc_dir):
+        shutil.copytree(source_etc_dir, os.path.join(dest_resources_dir, "etc"), dirs_exist_ok=True)
+
+    # --- EXPLICITLY copy critical GTK icon themes from Homebrew ---
+    logging.info("--- Bundling GTK Icon Themes ---")
+    homebrew_share_dir = os.path.join(homebrew_prefix, "share")
+    dest_share_dir = os.path.join(dest_resources_dir, "share")
+    
+    for theme in ["hicolor", "Adwaita"]:
+        source_theme_path = os.path.join(homebrew_share_dir, "icons", theme)
+        dest_theme_path = os.path.join(dest_share_dir, "icons", theme)
+        if os.path.isdir(source_theme_path):
+            logging.info(f"Copying '{theme}' icon theme.")
+            shutil.copytree(source_theme_path, dest_theme_path, dirs_exist_ok=True)
+        else:
+            logging.warning(f"Icon theme '{theme}' not found in Homebrew share directory.")
 
 
-def bundle_synfig_modules(app_bundle_path, args):
+def bundle_synfig_modules(app_bundle_path, args, processed_set):
     """Finds, bundles, and fixes Synfig's functional modules."""
     logging.info("--- Processing Synfig Modules ---")
 
@@ -325,15 +346,77 @@ def bundle_synfig_modules(app_bundle_path, args):
         if not os.path.isfile(module_file) or ".DS_Store" in module_file: continue
 
         logging.info(f"Processing module: {os.path.basename(module_file)}")
+        
+        # First, fix the module's own paths and ID, as before
         module_deps = get_dependencies(module_file)
         update_library_paths(module_file, module_deps, app_bundle_path)
-        update_library_id(module_file) 
+        update_library_id(module_file)
+
+
+        # Process each of the module's dependencies to bundle them.
+        logging.info(f"Found {len(module_deps)} dependencies for {os.path.basename(module_file)} to bundle.")
+        for lib_path in module_deps:
+            actual_path = resolve_library_path(lib_path, module_file)
+            if actual_path:
+                # Use the main recursive function to bundle the dependency
+                process_and_bundle_dependencies(actual_path, app_bundle_path, processed_set, dest_basename=os.path.basename(lib_path))
+            else:
+                logging.error(f"COULD NOT FIND dependency '{lib_path}' required by module '{os.path.basename(module_file)}'.")
 
 
 def generate_gtk_caches(app_bundle_path):
     """Generates the necessary cache files for bundled GTK resources to work correctly."""
     logging.info("--- Generating GTK Resource Caches ---")
-    homebrew_prefix = get_homebrew_prefix()
+
+    # GDK PIXBUF LOADER CACHE
+    gdk_pixbuf_tool = find_system_executable("gdk-pixbuf-query-loaders")
+    if gdk_pixbuf_tool:
+        loaders_dir = os.path.join(app_bundle_path, "Contents", "Resources", "lib", "gdk-pixbuf-2.0", "2.10.0", "loaders")
+        cache_file_path = os.path.join(app_bundle_path, "Contents", "Resources", "loaders.cache")
+        
+        logging.info(f"Generating GdkPixbuf loader cache at '{cache_file_path}'...")
+        try:
+            env = os.environ.copy()
+            env["GDK_PIXBUF_MODULEDIR"] = loaders_dir
+            
+            with open(cache_file_path, "w") as f:
+                subprocess.run([gdk_pixbuf_tool], check=True, stdout=f, env=env)
+            logging.info("Successfully generated GdkPixbuf loader cache.")
+        except Exception as e:
+            logging.error(f"Failed to generate GdkPixbuf loader cache: {e}")
+    else:
+        logging.warning("'gdk-pixbuf-query-loaders' not found. App UI will likely fail to load images.")
+
+    # ICON CACHE & 3. GSETTINGS (These are unchanged and correct)
+
+
+    # GDK PIXBUF LOADER CACHE
+    # This logic finds loaders in Frameworks but writes the cache to Resources.
+    # It does NOT create any new directories inside Frameworks.
+    gdk_pixbuf_tool = find_system_executable("gdk-pixbuf-query-loaders")
+    if gdk_pixbuf_tool:
+        frameworks_dir = os.path.join(app_bundle_path, "Contents", "Frameworks")
+        
+        # Find all pixbuf loader libraries already bundled in the Frameworks directory.
+        loader_paths = glob.glob(os.path.join(frameworks_dir, "libpixbufloader-*.so"))
+        loader_paths += glob.glob(os.path.join(frameworks_dir, "libpixbufloader-*.dylib"))
+
+        if loader_paths:
+            # The cache file will be placed in a valid location: Contents/Resources.
+            cache_file_path = os.path.join(app_bundle_path, "Contents", "Resources", "loaders.cache")
+            logging.info(f"Generating GdkPixbuf loader cache at '{cache_file_path}'...")
+            
+            try:
+                command = [gdk_pixbuf_tool] + loader_paths
+                with open(cache_file_path, "w") as f:
+                    subprocess.run(command, check=True, stdout=f)
+                logging.info("Successfully generated GdkPixbuf loader cache.")
+            except (subprocess.CalledProcessError, FileNotFoundError) as e:
+                logging.error(f"Failed to generate GdkPixbuf loader cache: {e}")
+        else:
+            logging.warning("No GDK pixbuf loaders found in Frameworks directory. UI images may not load.")
+    else:
+        logging.warning("'gtk-update-icon-cache' not found. Icons may fail to load.")
 
     # Update the Icon Caches (Hicolor and Adwaita)
     gtk_icon_cache_tool = find_system_executable("gtk-update-icon-cache")
@@ -350,65 +433,87 @@ def generate_gtk_caches(app_bundle_path):
                     logging.error(f"Failed to update {theme} icon cache: {e}")
             else:
                 logging.warning(f"Icon theme '{theme}' not found in bundle. Skipping cache update.")
-    else:
-        logging.warning("'gtk-update-icon-cache' not found. Icons may fail to load.")
 
-    # Compile GSettings Schemas
+    # GSETTINGS SCHEMAS
     glib_schema_tool = find_system_executable("glib-compile-schemas")
     if glib_schema_tool:
-        schemas_dir = os.path.join(app_bundle_path, "Contents", "share", "glib-2.0", "schemas")
+        schemas_dir = os.path.join(app_bundle_path, "Contents", "Resources", "share", "glib-2.0", "schemas")
         if os.path.isdir(schemas_dir):
             try:
                 logging.info(f"Compiling GSettings schemas in '{schemas_dir}'...")
                 subprocess.run([glib_schema_tool, schemas_dir], check=True)
-                logging.info("Successfully compiled GSettings schemas.")
+                logging.info(f"Compiling GSettings schemas in '{schemas_dir}'...")
             except subprocess.CalledProcessError as e:
                 logging.error(f"Failed to compile GSettings schemas: {e}")
         else:
-            logging.warning(f"GSettings schemas directory not found at '{schemas_dir}'.")
-    else:
-        logging.warning("'glib-compile-schemas' not found. App settings may not work correctly.")
+                logging.warning(f"GSettings schemas directory not found at '{schemas_dir}'.")
 
-
-def create_launcher_script(app_bundle_path, executable_name):
-    """Creates a shell script to set environment variables and launch the real executable."""
-    logging.info(f"Creating launcher script for '{executable_name}'...")
-
-    macos_dir = os.path.join(app_bundle_path, "Contents", "MacOS")
-    original_executable_path = os.path.join(macos_dir, executable_name)
-    real_executable_path = os.path.join(macos_dir, f"{executable_name}_real")
-
-    if not os.path.exists(original_executable_path):
-        logging.error(f"Cannot create launcher script. Original executable not found at '{original_executable_path}'.")
+def bundle_gdk_pixbuf_loaders(app_bundle_path):
+    """
+    Finds GDK Pixbuf loaders from Homebrew and bundles them into the correct
+    resource location within the app bundle.
+    """
+    logging.info("--- Bundling GDK Pixbuf Loaders ---")
+    homebrew_prefix = get_homebrew_prefix()
+    if not homebrew_prefix:
+        logging.error("Cannot find Homebrew prefix. Unable to bundle GDK Pixbuf loaders.")
+        return
+        
+    # Standard location for loaders in a Homebrew install of gtk+3
+    source_loaders_dir = os.path.join(homebrew_prefix, "lib", "gdk-pixbuf-2.0", "2.10.0", "loaders")
+    
+    if not os.path.isdir(source_loaders_dir):
+        logging.warning(f"GDK Pixbuf loaders directory not found at '{source_loaders_dir}'.")
         return
 
-    # Only create the launcher if it hasn't been done already
-    if not os.path.exists(real_executable_path):
-        os.rename(original_executable_path, real_executable_path)
-        logging.info(f"Renamed original executable to '{os.path.basename(real_executable_path)}'")
+    # A standard resource location for these loaders inside a bundle
+    dest_loaders_dir = os.path.join(app_bundle_path, "Contents", "Resources", "lib", "gdk-pixbuf-2.0", "2.10.0", "loaders")
+    
+    logging.info(f"Copying pixbuf loaders to: {os.path.relpath(dest_loaders_dir, app_bundle_path)}")
+    shutil.copytree(source_loaders_dir, dest_loaders_dir, dirs_exist_ok=True)
 
-        launcher_script_content = f"""#!/bin/bash
-# This script sets up the complete environment for a bundled GTK application.
 
-DIR=$(cd "$(dirname "$0")" && pwd)
+def is_binary_file(file_path):
+    try:
+        result = subprocess.run(
+            ["file", "-b", file_path], 
+            capture_output=True, 
+            text=True, 
+            check=True
+        )
+        return any(x in result.stdout for x in ["Mach-O", "shared library"])
+    except:
+        return False
 
-# Prioritize our bundled libraries to avoid system conflicts.
-export DYLD_LIBRARY_PATH="$DIR/../Frameworks"
+def scrub_rpaths(binary_path):
+    """
+    Removes any rpaths from a binary that point to system locations like
+    Homebrew, preventing system libraries from being loaded by mistake.
+    """
+    if not os.path.isfile(binary_path) or not is_binary_file(binary_path):
+        return
 
-# Point the module loader to our bundled Synfig modules.
-export LTDL_LIBRARY_PATH="$DIR/../Resources/synfig/modules"
+    logging.info(f"--- Scrubbing rpaths for {os.path.basename(binary_path)} ---")
+    try:
+        # Get the list of current rpaths using the existing helper
+        output = subprocess.check_output(["otool", "-l", binary_path], text=True)
+        current_rpaths = _extract_rpaths_from_otool(output, binary_path)
+        
+        # Identify any rpaths that are absolute and not part of the bundle
+        rpaths_to_delete = [r for r in current_rpaths if r.startswith('/')]
 
-# Point GTK to our bundled data files (icons, themes, etc.).
-export XDG_DATA_DIRS="$DIR/../share"
+        if not rpaths_to_delete:
+            logging.info("No external rpaths to delete.")
+            return
+        
+        # Delete each identified system rpath
+        for rpath in rpaths_to_delete:
+            logging.info(f"Deleting system rpath: '{rpath}' from {os.path.basename(binary_path)}")
+            subprocess.run(["install_name_tool", "-delete_rpath", rpath, binary_path], check=True, capture_output=True)
 
-# Execute the real binary, passing along all arguments.
-exec "$DIR/{os.path.basename(real_executable_path)}" "$@"
-"""
-        with open(original_executable_path, 'w') as f:
-            f.write(launcher_script_content)
+    except Exception as e:
+        logging.error(f"Failed to scrub rpaths for {binary_path}: {e}")
 
-        os.chmod(original_executable_path, 0o755)
-        logging.info(f"Created new executable launcher script at '{os.path.basename(original_executable_path)}'")
 
 
 def main():
@@ -470,16 +575,20 @@ def main():
             else:
                 logging.warning(f"SKIPPING: Could not find extra binary '{binary_name}' on the system.")
 
+    for binary_name in primary_binaries:
+        bundled_binary_path = os.path.join(app_bundle_path, "Contents", "MacOS", binary_name)
+        if os.path.exists(bundled_binary_path):
+            scrub_rpaths(bundled_binary_path)
+    
     
     # Bundle application-specific resources and plugins
     bundle_data_resources(app_bundle_path, args)
-    bundle_synfig_modules(app_bundle_path, args)
+    bundle_gdk_pixbuf_loaders(app_bundle_path) # <-- ADD THIS LINE
+    bundle_synfig_modules(app_bundle_path, args, processed_files)
     
     # Generate necessary caches for GTK
     generate_gtk_caches(app_bundle_path)
 
-    # Create the launcher script
-    create_launcher_script(app_bundle_path, "synfigstudio")
     logging.info(f"Successfully created and populated {app_name}")
 
 if __name__ == "__main__":

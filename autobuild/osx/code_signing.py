@@ -101,7 +101,7 @@ def sign_file(file_path, signing_identity, entitlements=None):
         "codesign",
         "--force",         # Replace any existing signature
         "--timestamp",     # Add a secure timestamp for long-term validity
-        "--options=runtime",  # Enable hardened runtime (required for notarization)
+        #"--options=runtime",  # Enable hardened runtime (required for notarization)
         "-s", signing_identity  # Specify the signing identity
     ]
     

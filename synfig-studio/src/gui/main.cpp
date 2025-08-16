@@ -44,6 +44,13 @@
 
 #include <iostream>
 
+// macOS-specific headers
+#ifdef __APPLE__
+#include <CoreFoundation/CoreFoundation.h>
+#include <stdlib.h>
+#include <sys/param.h> // For PATH_MAX
+#endif
+
 #endif
 
 /* === U S I N G =========================================================== */
@@ -57,12 +64,83 @@ using namespace studio;
 
 /* === P R O C E D U R E S ================================================= */
 
+#ifdef __APPLE__
+void setupMacOSEnvironment() {
+    CFBundleRef mainBundle = CFBundleGetMainBundle();
+    if (!mainBundle) {
+        return; // Not running in a bundle, do nothing.
+    }
+
+    CFURLRef resourcesURL = CFBundleCopyResourcesDirectoryURL(mainBundle);
+    if (!resourcesURL) {
+        return;
+    }
+
+    char resourcesPath[PATH_MAX];
+    if (!CFURLGetFileSystemRepresentation(resourcesURL, true, (UInt8 *)resourcesPath, PATH_MAX)) {
+        CFRelease(resourcesURL);
+        return;
+    }
+    CFRelease(resourcesURL);
+
+    std::string resourcesPathStr(resourcesPath);
+    std::string contentsPathStr = resourcesPathStr.substr(0, resourcesPathStr.rfind('/'));
+    
+    // Define paths based on the CORRECTED bundle layout
+    std::string frameworksPath = contentsPathStr + "/Frameworks";
+    std::string sharePath = resourcesPathStr + "/share";
+    std::string resourcesEtcPath = resourcesPathStr + "/etc";
+    std::string modulesPath = resourcesPathStr + "/synfig/modules";
+    std::string moduleListPath = resourcesEtcPath + "/synfig_modules.cfg";
+    std::string pixbufLoadersPath = resourcesPathStr + "/lib/gdk-pixbuf-2.0/2.10.0/loaders";
+    std::string gdkPixbufCache = resourcesPathStr + "/loaders.cache";
+    std::string gsettingsSchemas = sharePath + "/glib-2.0/schemas";
+
+    // Set Environment Variables
+    // Force linker to prioritize bundled libraries to prevent duplicates
+    setenv("DYLD_LIBRARY_PATH", frameworksPath.c_str(), 1);
+
+    // Point Synfig to its bundled resources
+    setenv("SYNFIG_ROOT", resourcesPathStr.c_str(), 1);
+    setenv("SYNFIG_MODULE_LIST", moduleListPath.c_str(), 1);
+    setenv("LTDL_LIBRARY_PATH", modulesPath.c_str(), 1);
+
+    // Configure GTK and other libraries to find their data
+    setenv("GTK_DATA_PREFIX", resourcesPathStr.c_str(), 1);
+    setenv("GSETTINGS_SCHEMA_DIR", gsettingsSchemas.c_str(), 1);
+    setenv("GDK_PIXBUF_MODULE_FILE", gdkPixbufCache.c_str(), 1);
+    setenv("GDK_PIXBUF_MODULEDIR", pixbufLoadersPath.c_str(), 1);
+    
+    // Set icon theme path
+    std::string iconThemePath = sharePath + "/icons";
+    setenv("GTK_ICON_THEME_PATH", iconThemePath.c_str(), 1);
+    
+    // Prepend bundled share path to XDG_DATA_DIRS
+    const char* oldXdgDataDirs = getenv("XDG_DATA_DIRS");
+    std::string newXdgDataDirs = sharePath;
+    if (oldXdgDataDirs) {
+        newXdgDataDirs += ":";
+        newXdgDataDirs += oldXdgDataDirs;
+    }
+    setenv("XDG_DATA_DIRS", newXdgDataDirs.c_str(), 1);
+    
+    // Set locale path for translations
+    std::string localePath = sharePath + "/locale";
+    setenv("LOCALE_PATH", localePath.c_str(), 1);
+}
+#endif // __APPLE__
+
 /* === M E T H O D S ======================================================= */
 
 /* === E N T R Y P O I N T ================================================= */
 
 int main(int argc, char **argv)
 {
+
+	#ifdef __APPLE__
+		setupMacOSEnvironment();
+	#endif
+
 	synfig::OS::fallback_binary_path = filesystem::Path(Glib::filename_to_utf8(argv[0]));
 	const filesystem::Path rootpath = synfig::OS::get_binary_path().parent_path().parent_path();
 	

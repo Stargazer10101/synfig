@@ -42,6 +42,10 @@ if(APPLE)
 		INSTALL_RPATH "@executable_path/../Frameworks"
 		BUILD_WITH_INSTALL_RPATH TRUE
 	)
+
+	# Add CoreFoundation framework for macOS environment setup
+	target_link_libraries(synfigstudio PRIVATE "-framework CoreFoundation")
+
 	configure_file(
 		"${CMAKE_SOURCE_DIR}/autobuild/osx/app_skeleton/Contents/Info.plist.in"
 		"${CMAKE_BINARY_DIR}/Info.plist"
